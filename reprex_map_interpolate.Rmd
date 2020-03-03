@@ -1,0 +1,159 @@
+---
+title: 
+output:
+  pdf_document:
+    df_print: kable
+    highlight: tango
+---
+
+Interpolate a time series of polygons with areal weighting through tidyr::nest and purrr::map.
+
+# Packages
+
+```{r pac, warning = FALSE, message = FALSE}
+
+library(tidyverse)
+library(viridis)
+library(sf)
+library(reprex)
+
+```
+
+# Data
+
+Package sf includes sample data described at https://r-spatial.github.io/spdep/articles/sids.html.
+
+```{r dat, warning = FALSE, message = FALSE}
+
+demo(nc, 
+     ask = FALSE, 
+     echo = FALSE)
+
+```
+
+\newpage
+
+# Wrangle
+
+Wrangle the North Carolina SIDS dataset to (a) a time series of intensive data and (b) a reference grid.
+
+```{r wra, warning = FALSE, message = FALSE}
+
+# (a)
+dat = 
+  nc %>% 
+  mutate(PNWBIR74 = NWBIR74 / BIR74,
+         PNWBIR79 = NWBIR79 / BIR79) %>% # Calculate intensive columns (%).
+  select(PNWBIR74,
+         PNWBIR79) %>% # Cut extensive columns.
+  data.frame %>% # Switch geometries to non-sf column for pivot_longer.
+  pivot_longer(cols = c(PNWBIR74,
+                        PNWBIR79),
+               names_to = "year",
+               values_to = "perc") %>% # Pivot for consistency w/ use case.
+  mutate(year = ifelse(year == "PNWBIR74",
+                       1974,
+                       1979)) %>% # Get years into numeric.
+  data.frame %>% # Get class back to data.frame. This doesn't matter.
+  st_sf %>% # Get geometries back to sf.
+  rename(geometry = geom) # Fix geometries name for rbind w/ interpolation output.
+
+# (b)
+ref = 
+  nc %>% 
+  st_make_grid(n = c(20, 
+                     10)) # Get a grid for interpolation.
+
+```
+
+\newpage
+
+# Run
+
+Interpolate the time series of intensive data onto the reference grid, with (b) and without (a) explicit time.
+
+```{r run, warning = FALSE, message = FALSE}
+
+# Get results w/o accounting for years.
+out_wrong = 
+  dat %>% 
+  st_interpolate_aw(to = ref,
+                    extensive = FALSE) %>% 
+  mutate(year = "(Interpolated)") %>% 
+  select(-Group.1) %>% 
+  rbind(dat)
+
+# Get results w/ explicit years. 
+out_right = 
+  dat %>% 
+  group_by(year) %>% 
+  nest %>% # Turn data into a list column by year.
+  mutate(Output = 
+           data %>% 
+           map(.f = st_interpolate_aw,
+               to = ref,
+               extensive = FALSE) %>% # Interpolate data to the reference grid.
+           map(.f = select,
+               -Group.1), # Tag on explicit identifier for output.
+         Input = 
+           data %>% 
+           map(.x = .,
+               .f = data.frame)) %>% 
+  select(-data) %>% 
+  pivot_longer(cols = c("Input",
+                        "Output"),
+               names_to = "names",
+               values_to = "data") %>% 
+  unnest %>% # Get data back out of the list column.
+  ungroup %>% 
+  data.frame %>% 
+  rbind %>% 
+  st_sf
+
+```
+
+\newpage
+
+# Visualize
+
+Illustrate the input and output without explicit years. 
+
+```{r vis_wrong}
+
+ggplot() + 
+  geom_sf(data = out_wrong, 
+          aes(fill = perc), 
+          color = NA) + 
+  geom_sf(data = ref,
+          fill = NA,
+          color = "grey50",
+          size = 0.25) +
+  facet_wrap(~ year,
+             ncol = 1) + 
+  scale_fill_viridis() + 
+  theme_void() +
+  theme(legend.position = "none")
+
+```
+
+\newpage
+
+Illustrate the input and output with explicit years.
+
+```{r vis_right}
+
+ggplot() + 
+  geom_sf(data = out_right, 
+          aes(fill = perc), 
+          color = NA) + 
+  geom_sf(data = ref,
+          fill = NA,
+          color = "grey50",
+          size = 0.25) +
+  facet_wrap(year ~ names) + 
+  scale_fill_viridis() + 
+  theme_void() +
+  theme(legend.position = "none")
+
+```
+
