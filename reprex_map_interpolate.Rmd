@@ -1,9 +1,5 @@
 ---
-title: 
-output:
-  pdf_document:
-    df_print: kable
-    highlight: tango
+output: rmarkdown::github_document
 ---
 
 Interpolate a time series of polygons with areal weighting through tidyr::nest and purrr::map.
